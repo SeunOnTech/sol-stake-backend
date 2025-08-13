@@ -2,6 +2,8 @@ type Query {
   validators: [Validator!]!
   users: [User!]!
   scoringRuns: [ScoringRun!]!
+  systemStats: SystemStats!
+  cacheStatus: CacheStatus!
 }
 
 type Validator {
@@ -60,4 +62,29 @@ type StakeAccount {
   walletPubkey: String!
   stakedAmount: Float!
   validator: ValidatorInfo!
+}
+
+# New types for Week 4 features
+type SystemStats {
+  validatorCount: Int!
+  userCount: Int!
+  scoringRunCount: Int!
+  timestamp: String!
+}
+
+type CacheStatus {
+  totalKeys: Int!
+  memoryUsage: String!
+  hitRate: Float
+}
+
+type Mutation {
+  clearCache: CacheOperationResult!
+  invalidateValidatorCache: CacheOperationResult!
+}
+
+type CacheOperationResult {
+  success: Boolean!
+  message: String!
+  timestamp: String!
 }

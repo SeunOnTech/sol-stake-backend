@@ -4,12 +4,69 @@ import { ApolloServer } from "apollo-server-express";
 import { readFileSync } from "fs";
 import path from "path";
 import { resolvers } from "./api/resolvers";
+import { authMiddleware, createGraphQLContext } from "./lib/auth";
+import { rateLimitMiddleware } from "./lib/rateLimit";
+import { graphQLCache } from "./lib/cache";
 
 const app = express();
+
+// Trust proxy for accurate IP addresses
+app.set('trust proxy', 1);
+
+// Apply rate limiting middleware
+app.use(rateLimitMiddleware({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  maxRequests: 100 // limit each IP to 100 requests per windowMs
+}));
+
+// Apply authentication middleware
+app.use(authMiddleware);
 
 // Health check endpoint
 app.get("/health", (_, res) => {
   res.json({ status: "ok" });
+});
+
+// Cache status endpoint
+app.get("/cache/status", async (_, res) => {
+  try {
+    const stats = await graphQLCache.getStats();
+    res.json({
+      status: "ok",
+      cache: stats
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Failed to get cache status"
+    });
+  }
+});
+
+// Clear cache endpoint (admin only)
+app.post("/cache/clear", (req: any, res) => {
+  const auth = req.auth;
+  
+  if (!auth?.hasPermission('admin:system')) {
+    return res.status(403).json({
+      status: "error",
+      message: "Insufficient permissions"
+    });
+  }
+
+  graphQLCache.clearAll()
+    .then(() => {
+      res.json({
+        status: "ok",
+        message: "Cache cleared successfully"
+      });
+    })
+    .catch((error) => {
+      res.status(500).json({
+        status: "error",
+        message: "Failed to clear cache"
+      });
+    });
 });
 
 // Load GraphQL schema from SDL file
@@ -19,43 +76,21 @@ const typeDefs = readFileSync(
 );
 
 (async () => {
-  const server = new ApolloServer({ typeDefs, resolvers });
+  const server = new ApolloServer({ 
+    typeDefs, 
+    resolvers,
+    context: ({ req }) => createGraphQLContext(req)
+  });
+  
   await server.start();
   server.applyMiddleware({ app, path: "/graphql" });
 
-  app.listen(3007, () => {
-    console.log(`🚀 Server ready at http://localhost:3007/graphql`);
+  const port = process.env.PORT || 3007;
+  app.listen(port, () => {
+    console.log(`🚀 Server ready at http://localhost:${port}/graphql`);
+    console.log(`📊 Health check: http://localhost:${port}/health`);
+    console.log(`💾 Cache status: http://localhost:${port}/cache/status`);
+    console.log(`🔐 Authentication: JWT Bearer token required for protected endpoints`);
+    console.log(`⚡ Rate limiting: 100 requests per 15 minutes per IP`);
   });
 })();
-
-
-// // src/index.ts
-// import { ApolloServer } from 'apollo-server-express';
-// import express from 'express';
-// import { gql } from 'apollo-server-express';
-
-// const app = express();
-
-// // Minimal schema so Apollo Server doesn't crash
-// const typeDefs = gql`
-//   type Query {
-//     hello: String
-//   }
-// `;
-
-// const resolvers = {
-//   Query: {
-//     hello: () => 'Hello Solana Staking Backend!',
-//   },
-// };
-
-// const server = new ApolloServer({ typeDefs, resolvers });
-
-// (async () => {
-//   await server.start();
-//   server.applyMiddleware({ app });
-
-//   app.listen(3007, () => {
-//     console.log(`Server ready at http://localhost:3007${server.graphqlPath}`);
-//   });
-// })();

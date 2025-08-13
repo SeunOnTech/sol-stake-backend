@@ -1,6 +1,6 @@
 # Solana Staking Backend
 
-A comprehensive, production-ready backend system for Solana validator staking operations, featuring automated data collection, trust scoring, job queuing, and real-time monitoring.
+A comprehensive, production-ready backend system for Solana validator staking operations, featuring automated data collection, trust scoring, job queuing, real-time monitoring, Redis caching, JWT authentication, and rate limiting.
 
 ## 🎯 **Project Overview**
 
@@ -12,6 +12,9 @@ This backend system provides a robust foundation for Solana staking applications
 - **Providing GraphQL API** for frontend applications
 - **Managing background jobs** with BullMQ and Redis
 - **Monitoring system health** with comprehensive metrics and logging
+- **Implementing Redis caching** for improved query performance
+- **Securing endpoints** with JWT authentication and role-based access control
+- **Protecting against abuse** with intelligent rate limiting
 
 ## 🏗️ **System Architecture**
 
@@ -23,11 +26,10 @@ This backend system provides a robust foundation for Solana staking applications
 │   (Express)     │◄──►│   (BullMQ)      │◄──►│   (PostgreSQL)  │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
-         │                       │                       │
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Validators    │    │   Workers       │    │   Redis Cache   │
-│   (Solana RPC)  │    │   (Background)  │    │   (Job Storage) │
+│   Redis Cache   │    │   Rate Limiter  │    │   Auth Service  │
+│   (5min TTL)    │    │   (100/15min)   │    │   (JWT)        │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
@@ -37,6 +39,9 @@ This backend system provides a robust foundation for Solana staking applications
 - **Database**: PostgreSQL with Prisma ORM
 - **Job Queue**: BullMQ with Redis
 - **API**: GraphQL with Apollo Server
+- **Caching**: Redis with configurable TTL
+- **Authentication**: JWT with role-based permissions
+- **Rate Limiting**: Redis-based with IP + user tracking
 - **Logging**: Pino with structured logging
 - **Monitoring**: Custom metrics and health checks
 - **Blockchain**: Solana RPC integration
@@ -61,7 +66,15 @@ This backend system provides a robust foundation for Solana staking applications
 - [x] **Health Monitoring**: System health checks and metrics
 - [x] **Audit Logging**: Complete operation tracking
 - [x] **Performance Metrics**: Job duration, success rates, coverage
-- **Idempotent Operations**: Safe repeated execution
+
+### **✅ Week 4 - Security & Performance**
+- [x] **Redis Query Caching**: 5-minute TTL for hot queries
+- [x] **JWT Authentication**: Secure token-based authentication
+- [x] **Role-Based Access Control**: Viewer, User, and Admin roles
+- [x] **Rate Limiting**: 100 requests per 15 minutes per IP
+- [x] **Protected Endpoints**: Secure GraphQL queries and mutations
+- [x] **Cache Management**: Admin-only cache invalidation
+- [x] **Permission System**: Granular access control for operations
 
 ## 🚀 **Quick Start**
 
@@ -89,9 +102,8 @@ cp .env.example .env
 npx prisma db push
 npx prisma generate
 
-# Start the system
-npm run dev          # GraphQL server
-npm run worker       # Background worker
+# Start the server
+npm run dev
 ```
 
 ### **Environment Variables**
@@ -106,9 +118,247 @@ REDIS_URL="redis://localhost:6379"
 # Solana
 SOLANA_RPC_URL="https://api.mainnet-beta.solana.com"
 
+# JWT (change in production!)
+JWT_SECRET_KEY="your-super-secret-jwt-key-change-in-production"
+JWT_EXPIRY="24h"
+
 # Server
-PORT=4000
+PORT=3007
 NODE_ENV=development
+```
+
+## 🛣️ **Available Routes & Endpoints**
+
+### **REST Endpoints**
+
+#### **Health & Status**
+```http
+GET  /health                    # System health check
+GET  /cache/status             # Redis cache statistics
+POST /cache/clear              # Clear all cache (Admin only)
+```
+
+#### **Response Examples**
+
+**Health Check:**
+```json
+{
+  "status": "ok"
+}
+```
+
+**Cache Status:**
+```json
+{
+  "status": "ok",
+  "cache": {
+    "totalKeys": 15,
+    "memoryUsage": "2.5M",
+    "hitRate": null
+  }
+}
+```
+
+### **GraphQL Endpoints**
+
+#### **Public Queries (No Authentication Required)**
+```graphql
+# Get all validators with latest trust scores
+query {
+  validators {
+    id
+    validatorPubkey
+    uptime
+    commission
+    latestTrustScore {
+      score
+      createdAt
+    }
+  }
+}
+```
+
+#### **Protected Queries (Authentication Required)**
+
+**Users Query (requires `read:users` permission):**
+```graphql
+query {
+  users {
+    id
+    walletPubkey
+    stakeAccounts {
+      id
+      stakedAmount
+      validator {
+        validatorPubkey
+        name
+      }
+    }
+  }
+}
+```
+
+**Scoring Runs Query (requires `read:scores` permission):**
+```graphql
+query {
+  scoringRuns {
+    id
+    runDate
+    trustScores {
+      score
+      validator {
+        validatorPubkey
+      }
+    }
+  }
+}
+```
+
+**System Stats Query (requires `admin` role):**
+```graphql
+query {
+  systemStats {
+    validatorCount
+    userCount
+    scoringRunCount
+    timestamp
+  }
+}
+```
+
+**Cache Status Query (requires `admin:system` permission):**
+```graphql
+query {
+  cacheStatus {
+    totalKeys
+    memoryUsage
+    hitRate
+  }
+}
+```
+
+#### **Protected Mutations (Authentication Required)**
+
+**Clear Cache (requires `admin:system` permission):**
+```graphql
+mutation {
+  clearCache {
+    success
+    message
+    timestamp
+  }
+}
+```
+
+**Invalidate Validator Cache (requires `admin:system` permission):**
+```graphql
+mutation {
+  invalidateValidatorCache {
+    success
+    message
+    timestamp
+  }
+}
+```
+
+## 🔐 **Authentication & Authorization**
+
+### **JWT Token Structure**
+```json
+{
+  "userId": "user-123",
+  "email": "user@example.com",
+  "role": "admin",
+  "permissions": ["read:validators", "read:scores", "admin:system"],
+  "iat": 1640995200,
+  "exp": 1641081600
+}
+```
+
+### **User Roles & Permissions**
+
+#### **👁️ Viewer Role**
+- **Permissions**: `read:validators`, `read:scores`
+- **Access**: Public data only
+- **Use Case**: Read-only access for public information
+
+#### **👤 User Role**
+- **Permissions**: `read:validators`, `read:scores`, `write:stakes`
+- **Access**: Public data + stake management
+- **Use Case**: Regular users managing their stakes
+
+#### **👑 Admin Role**
+- **Permissions**: `read:validators`, `read:scores`, `write:stakes`, `write:validators`, `admin:system`
+- **Access**: Full system access
+- **Use Case**: System administration and maintenance
+
+### **Authentication Headers**
+```http
+Authorization: Bearer <your-jwt-token>
+```
+
+### **Testing Authentication**
+```bash
+# Generate test tokens
+npm run generate:tokens
+
+# Use tokens in requests
+curl -H "Authorization: Bearer <token>" http://localhost:3007/graphql
+```
+```bash
+# Generate test tokens
+npm run generate:tokens
+
+# Use tokens in requests
+curl -H "Authorization: Bearer <token>" http://localhost:3007/graphql
+```
+
+## 💾 **Redis Caching System**
+
+### **Cache Configuration**
+- **TTL**: 5 minutes (300 seconds) for hot queries
+- **Key Pattern**: `graphql:<hash>` for GraphQL queries
+- **Storage**: Redis with automatic expiration
+- **Scope**: Query + variables hash for precise caching
+
+### **Cache Behavior**
+- **Cache Miss**: First request stores result in Redis
+- **Cache Hit**: Subsequent identical requests return cached data
+- **Automatic Expiry**: Keys expire after 5 minutes
+- **Query-Specific**: Different query parameters create separate cache entries
+
+### **Cache Management**
+```bash
+# View cache statistics
+curl http://localhost:3007/cache/status
+
+# Clear all cache (Admin only)
+curl -X POST http://localhost:3007/cache/clear \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+## ⚡ **Rate Limiting**
+
+### **Configuration**
+- **Window**: 15 minutes (900,000 ms)
+- **Limit**: 100 requests per window per IP
+- **Tracking**: IP address + user ID combination
+- **Storage**: Redis sorted sets with automatic cleanup
+
+### **Rate Limit Headers**
+```http
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1640995200000
+```
+
+### **Rate Limit Response (429)**
+```json
+{
+  "error": "Too Many Requests",
+  "message": "Rate limit exceeded. Please try again later.",
+  "retryAfter": 300
+}
 ```
 
 ## 📊 **Database Schema**
@@ -174,10 +424,6 @@ model AuditLog {
 
 ## 🔧 **API Reference**
 
-### **GraphQL Endpoint**
-- **URL**: `http://localhost:4000`
-- **Playground**: Available at the same URL
-
 ### **Core Queries**
 
 #### **Get All Validators**
@@ -185,15 +431,24 @@ model AuditLog {
 query GetValidators {
   validators {
     id
-    validatorPubkey
     voteAccount
+    name
+    validatorPubkey
     commission
     uptime
-    latestTrustScore {
+    trustScores {
+      id
       score
       createdAt
       scoringRunId
     }
+    latestTrustScore {
+      id
+      score
+      createdAt
+    }
+    createdAt
+    updatedAt
   }
 }
 ```
@@ -236,6 +491,42 @@ query GetUsers {
 }
 ```
 
+#### **Get System Statistics (Admin Only)**
+```graphql
+query GetSystemStats {
+  systemStats {
+    validatorCount
+    userCount
+    scoringRunCount
+    timestamp
+  }
+}
+```
+
+### **Cache Management Mutations (Admin Only)**
+
+#### **Clear All Cache**
+```graphql
+mutation ClearCache {
+  clearCache {
+    success
+    message
+    timestamp
+  }
+}
+```
+
+#### **Invalidate Validator Cache**
+```graphql
+mutation InvalidateValidatorCache {
+  invalidateValidatorCache {
+    success
+    message
+    timestamp
+  }
+}
+```
+
 ## ⚡ **Job Queue System**
 
 ### **Queue Types**
@@ -253,7 +544,6 @@ query GetUsers {
 ### **Job Configuration**
 
 ```typescript
-// Test Mode (30s intervals)
 const TEST_CONFIG = {
   fetchInterval: 30_000,        // 30 seconds
   scoreInterval: 60_000,        // 60 seconds
@@ -261,7 +551,6 @@ const TEST_CONFIG = {
   removeOnFail: { age: 24 * 60 * 60 * 1000 } // 24 hours
 };
 
-// Production Mode (6h intervals)
 const PRODUCTION_CONFIG = {
   fetchInterval: 6 * 60 * 60 * 1000,        // 6 hours
   scoreInterval: 6 * 60 * 60 * 1000,        // 6 hours
@@ -291,7 +580,7 @@ export const validatorWorker = new Worker(
 
 #### **System Metrics**
 - Database connection status
-- Redis memory usage
+- Redis memory usage and cache hit rates
 - Queue depth and processing rates
 - Worker health and performance
 
@@ -311,13 +600,13 @@ export const validatorWorker = new Worker(
 
 ```bash
 # System health overview
-npm run metrics:summary
-
-# Detailed health check
 npm run metrics:health
 
-# Prometheus metrics export
-npm run metrics:prometheus
+# Cache status
+curl http://localhost:3007/cache/status
+
+# Rate limit info
+# Check response headers for X-RateLimit-* values
 ```
 
 ### **Logging**
@@ -333,14 +622,14 @@ Example log output:
 ```json
 {
   "level": "info",
-  "time": "2024-01-15T10:30:00.000Z",
+  "time": "2024-01-01T12:00:00.000Z",
   "jobType": "score",
   "phase": "validator-processing",
   "batchNumber": 14,
   "totalBatches": 23,
   "progress": "650/1102",
   "successRate": "94.5%",
-  "msg": "✅ Processed 650/1102 validators"
+  "validatorId": "validator-123"
 }
 ```
 
@@ -348,11 +637,23 @@ Example log output:
 
 ### **Automated Testing**
 
-#### **Bit 9 - Full Pipeline Test**
+#### **Week 4 - Full Feature Test**
 ```bash
-npm run verify:bit9
+npm run test:week4
 ```
-Comprehensive end-to-end testing of the entire system.
+Comprehensive end-to-end testing of caching, authentication, and rate limiting.
+
+#### **Authentication Testing**
+```bash
+# Generate test JWT tokens for different roles
+npm run generate:tokens
+
+# Test with viewer role
+curl -H "Authorization: Bearer <viewer-token>" http://localhost:3007/graphql
+
+# Test with admin role
+curl -H "Authorization: Bearer <admin-token>" http://localhost:3007/graphql
+```
 
 #### **Database Verification**
 ```bash
@@ -370,21 +671,54 @@ npm run queue:monitor
 
 # Test metrics
 npm run metrics:summary
+
+# Generate test JWT tokens
+npm run generate:tokens
 ```
 
 ### **Manual Testing**
 
 #### **GraphQL API Testing**
 1. Start the server: `npm run dev`
-2. Open GraphQL Playground: `http://localhost:4000`
+2. Open GraphQL Playground: `http://localhost:3007/graphql`
 3. Execute test queries
-4. Verify data integrity
+4. Verify data integrity and caching
 
-#### **Job Queue Testing**
-1. Start worker: `npm run worker`
-2. Add test jobs: `npm run queue:add fetch`
-3. Monitor execution: `npm run queue:monitor`
-4. Verify database changes
+#### **Authentication Testing**
+1. Generate test tokens: `npm run generate:tokens`
+2. Test public endpoints (no token required)
+3. Test protected endpoints (token required)
+4. Verify role-based permissions
+
+#### **Cache Testing**
+1. Make first query (cache miss)
+2. Make identical query (cache hit)
+3. Check cache status: `curl http://localhost:3007/cache/status`
+4. Clear cache (admin only)
+
+#### **Rate Limiting Testing**
+1. Make multiple rapid requests
+2. Check rate limit headers
+3. Exceed limit to see 429 response
+4. Wait for window reset
+
+#### **Authentication Testing**
+1. Generate test tokens: `npm run generate:tokens`
+2. Test public endpoints (no token required)
+3. Test protected endpoints (token required)
+4. Verify role-based permissions
+
+#### **Cache Testing**
+1. Make first query (cache miss)
+2. Make identical query (cache hit)
+3. Check cache status: `curl http://localhost:3007/cache/status`
+4. Clear cache (admin only)
+
+#### **Rate Limiting Testing**
+1. Make multiple rapid requests
+2. Check rate limit headers
+3. Exceed limit to see 429 response
+4. Wait for window reset
 
 ## 🚀 **Production Deployment**
 
@@ -396,16 +730,15 @@ NODE_ENV=production
 DATABASE_URL="postgresql://user:password@prod-host:5432/sol_stake"
 REDIS_URL="redis://prod-redis:6379"
 SOLANA_RPC_URL="https://api.mainnet-beta.solana.com"
+JWT_SECRET_KEY="your-production-secret-key"
+JWT_EXPIRY="24h"
 PORT=4000
 ```
 
 #### **Production Job Scheduling**
 ```bash
 # Switch to production intervals (6h)
-npm run queue:scheduler production
-
-# Verify configuration
-npm run queue:scheduler list
+npm run queue:scheduler setup production
 ```
 
 ### **Deployment Options**
@@ -447,23 +780,25 @@ CMD ["npm", "start"]
 
 #### **Health Check Endpoints**
 - **System Health**: `GET /health`
-- **Metrics**: `GET /metrics`
-- **Prometheus**: `GET /metrics/prometheus`
+- **Cache Status**: `GET /cache/status`
+- **GraphQL**: `POST /graphql`
 
 #### **Recommended Monitoring**
 - **Infrastructure**: CPU, memory, disk usage
-- **Application**: Response times, error rates
+- **Application**: Response times, error rates, cache hit rates
 - **Database**: Connection pool, query performance
-- **Redis**: Memory usage, connection count
+- **Redis**: Memory usage, connection count, cache efficiency
 - **Queue**: Job processing rates, failure rates
+- **Authentication**: Token validation success rates
+- **Rate Limiting**: Request patterns, blocked requests
 
 ## 🔒 **Security Considerations**
 
 ### **Access Control**
-- Database connection security
-- Redis access restrictions
-- API rate limiting
-- Environment variable protection
+- JWT token validation on all protected endpoints
+- Role-based permission system
+- IP-based rate limiting
+- Admin-only cache management
 
 ### **Data Protection**
 - Input validation and sanitization
@@ -474,14 +809,48 @@ CMD ["npm", "start"]
 ### **Network Security**
 - HTTPS enforcement in production
 - CORS configuration
-- API authentication (implement as needed)
+- API authentication required for sensitive operations
 - Network isolation for sensitive services
+
+### **JWT Security**
+- Secure secret key management
+- Token expiration (24h default)
+- Issuer and audience validation
+- Role and permission verification
 
 ## 🚨 **Troubleshooting**
 
 ### **Common Issues**
 
-#### **1. Database Connection Errors**
+#### **1. Authentication Errors**
+```bash
+# Check JWT token validity
+npm run generate:tokens
+
+# Verify token in request headers
+curl -H "Authorization: Bearer <token>" http://localhost:3007/graphql
+```
+
+#### **2. Cache Issues**
+```bash
+# Check cache status
+curl http://localhost:3007/cache/status
+
+# Clear cache if needed (admin only)
+curl -X POST http://localhost:3007/cache/clear \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+#### **3. Rate Limiting Issues**
+```bash
+# Check rate limit headers in responses
+# Look for X-RateLimit-* headers
+
+# Wait for rate limit window to reset
+# Default: 15 minutes
+```
+
+#### **4. Database Connection Errors**
 ```bash
 # Check database status
 npm run metrics:health
@@ -493,7 +862,7 @@ echo $DATABASE_URL
 npx prisma db push
 ```
 
-#### **2. Redis Connection Issues**
+#### **5. Redis Connection Issues**
 ```bash
 # Check Redis status
 redis-cli ping
@@ -505,7 +874,7 @@ echo $REDIS_URL
 npm run queue:monitor
 ```
 
-#### **3. Job Processing Failures**
+#### **6. Job Processing Failures**
 ```bash
 # Check worker logs
 npm run worker
@@ -515,18 +884,6 @@ npm run queue:monitor
 
 # Verify job configuration
 npm run queue:scheduler list
-```
-
-#### **4. GraphQL API Issues**
-```bash
-# Check server status
-npm run dev
-
-# Test API endpoint
-curl http://localhost:4000
-
-# Verify schema
-npx prisma generate
 ```
 
 ### **Debug Commands**
@@ -542,17 +899,20 @@ npm run queue:monitor
 npm run verify:db
 
 # Test full pipeline
-npm run verify:bit9
+npm run test:week4
+
+# Generate test tokens
+npm run generate:tokens
 ```
 
-## 📚 **Development Workflow**
+## 🔄 **Development Workflow**
 
 ### **Adding New Features**
 
 1. **Update Prisma Schema**: Add new models/fields
 2. **Generate Client**: `npx prisma generate`
 3. **Update GraphQL Schema**: Add new types/queries
-4. **Implement Resolvers**: Add business logic
+4. **Implement Resolvers**: Add business logic with proper auth
 5. **Add Tests**: Create verification scripts
 6. **Update Documentation**: Document new features
 
@@ -565,7 +925,10 @@ src/
 │   └── resolvers/         # Query and mutation handlers
 ├── lib/                   # Shared libraries
 │   ├── prisma.ts         # Database client
-│   └── redis.ts          # Redis connection
+│   ├── redis.ts          # Redis connection
+│   ├── cache.ts          # Redis caching utilities
+│   ├── auth.ts           # JWT authentication
+│   └── rateLimit.ts      # Rate limiting utilities
 ├── workers/               # Background job processors
 │   ├── fetchValidators.ts # Validator data fetching
 │   └── scoringAllValidators.ts # Trust score calculation
@@ -586,16 +949,19 @@ src/
 - Monitor system health metrics
 - Check job success rates
 - Review error logs
+- Monitor cache hit rates
 
 #### **Weekly**
 - Analyze performance trends
 - Review audit logs
 - Update validator data
+- Check rate limiting patterns
 
 #### **Monthly**
 - Database maintenance and optimization
 - Review and update scoring algorithms
 - Performance tuning and optimization
+- Security audit and token rotation
 
 ### **Update Procedures**
 
@@ -627,15 +993,26 @@ npx prisma db push
 pm2 restart all
 ```
 
+#### **Cache Management**
+```bash
+# Clear all cache (admin only)
+curl -X POST http://localhost:3007/cache/clear \
+  -H "Authorization: Bearer <admin-token>"
+
+# Monitor cache performance
+curl http://localhost:3007/cache/status
+```
+
 ## 🎯 **Future Enhancements**
 
 ### **Planned Features**
 - **Real-time WebSocket updates** for live data streaming
 - **Advanced scoring algorithms** with machine learning
 - **Multi-chain support** for other blockchain networks
-- **User authentication and authorization**
+- **User authentication and authorization** (real user management)
 - **Advanced analytics and reporting**
 - **Mobile API optimization**
+- **Enhanced caching strategies** with cache warming
 
 ### **Scalability Improvements**
 - **Horizontal scaling** with multiple worker instances
@@ -643,13 +1020,15 @@ pm2 restart all
 - **Caching layers** for improved performance
 - **Load balancing** for high availability
 - **Microservices architecture** for modularity
+- **Redis clustering** for high-performance caching
 
 ## 📞 **Support & Contributing**
 
 ### **Getting Help**
-- **Documentation**: This README and related docs
-- **Issues**: GitHub issue tracker
-- **Discussions**: GitHub discussions for questions
+- Check the troubleshooting section above
+- Review logs for error details
+- Verify environment configuration
+- Test individual components
 
 ### **Contributing**
 1. Fork the repository
@@ -658,27 +1037,52 @@ pm2 restart all
 4. Submit a pull request
 5. Ensure all tests pass
 
-### **Code Standards**
-- **TypeScript**: Strict type checking enabled
-- **ESLint**: Code quality and consistency
-- **Prettier**: Code formatting
-- **Testing**: Comprehensive test coverage
-
 ## 📄 **License**
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🙏 **Acknowledgments**
 
-- **Solana Foundation** for blockchain infrastructure
-- **Prisma Team** for excellent ORM tools
-- **BullMQ Team** for robust job queue system
-- **Apollo GraphQL** for GraphQL server implementation
+- Solana Foundation for blockchain infrastructure
+- Prisma team for excellent ORM tooling
+- BullMQ team for reliable job queuing
+- Redis team for high-performance caching
 
 ---
 
-**🎉 Congratulations! You now have a production-ready Solana staking backend system.**
+**🎉 Congratulations! You now have a production-ready Solana staking backend system with enterprise-grade security and performance features.**
 
-This system provides a solid foundation for building staking applications with automated data collection, intelligent scoring, and comprehensive monitoring. The architecture is designed to scale with your needs while maintaining reliability and performance.
+This system provides a solid foundation for building staking applications with automated data collection, intelligent scoring, comprehensive monitoring, Redis caching, JWT authentication, and rate limiting. The architecture is designed to scale with your needs while maintaining reliability, security, and performance.
 
 For questions or support, please refer to the troubleshooting section or create an issue in the repository.
+
+## 🚀 **Quick Commands Reference**
+
+```bash
+# Development
+npm run dev                    # Start GraphQL server
+npm run worker                # Start background worker
+npm run build                 # Build TypeScript
+
+# Job Queue Management
+npm run queue:add fetch       # Add fetch job
+npm run queue:add score       # Add score job
+npm run queue:monitor         # Monitor queue status
+npm run queue:scheduler       # Manage repeatable jobs
+
+# Testing & Verification
+npm run test:week4            # Full Week 4 feature test
+npm run verify:db             # Database verification
+npm run score:all             # Test scoring system
+npm run generate:tokens       # Generate test JWT tokens
+
+# Monitoring
+npm run metrics:summary       # System overview
+npm run metrics:health        # Health check
+npm run metrics:prometheus    # Prometheus export
+
+# Cache Management
+curl http://localhost:3007/cache/status                    # View cache stats
+curl -X POST http://localhost:3007/cache/clear \          # Clear cache (admin)
+  -H "Authorization: Bearer <admin-token>"
+```
