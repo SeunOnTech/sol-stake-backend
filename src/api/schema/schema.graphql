@@ -1,0 +1,63 @@
+type Query {
+  validators: [Validator!]!
+  users: [User!]!
+  scoringRuns: [ScoringRun!]!
+}
+
+type Validator {
+  id: ID!
+  voteAccount: String!
+  name: String
+  validatorPubkey: String!
+  commission: Float
+  uptime: Float!
+  trustScores: [TrustScore!]!
+  latestTrustScore: TrustScore
+  createdAt: String!
+  updatedAt: String!
+}
+
+type TrustScore {
+  id: ID!
+  score: Float!
+  createdAt: String!
+  scoringRunId: String!
+  validatorId: String!
+  validator: Validator!
+}
+
+type ScoringRun {
+  id: ID!
+  runDate: String!
+  status: String!
+  validatorCount: Int!
+  successCount: Int!
+  failCount: Int!
+  createdAt: String!
+  trustScores: [TrustScore!]!
+}
+
+type TrustScoreDetail {
+  id: ID!
+  score: Float!
+  createdAt: String!
+  validator: ValidatorInfo!
+}
+
+type ValidatorInfo {
+  validatorPubkey: String!
+  name: String
+}
+
+type User {
+  id: ID!
+  walletPubkey: String!
+  stakeAccounts: [StakeAccount!]!
+}
+
+type StakeAccount {
+  id: ID!
+  walletPubkey: String!
+  stakedAmount: Float!
+  validator: ValidatorInfo!
+}
